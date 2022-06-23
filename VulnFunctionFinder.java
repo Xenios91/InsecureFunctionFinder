@@ -40,7 +40,8 @@ import ghidra.program.model.symbol.SymbolIterator;
 public class VulnFunctionFinder extends GhidraScript {
 
 	private DecompInterface decomplib;
-	private List<String> functionsOfInterest = Arrays.asList("printf");
+	private final List<String> functionsOfInterest = Arrays.asList("printf", "atoi", "atol", "atoll", "gets", "strcat",
+			"memcpy", "strcpy", "sprintf", "system", "exec", "strncpy", "vsprintf", "strlen");
 
 	/**
 	 * Decompile function.
@@ -99,14 +100,18 @@ public class VulnFunctionFinder extends GhidraScript {
 		symbolIter.forEachRemaining(symbol -> {
 
 			final Function function = functionManager.getFunctionAt(symbol.getAddress());
-			if (function == null) {
+
+			// if function is null or it is an external function we skip it.
+			if (function == null || function.toString().contains("EXTERNAL")) {
 				return;
 			}
 
+			// get all called functions.
 			final Set<Function> calledFunctions = function.getCalledFunctions(null);
 
-			for (String functionOfInterestName : this.functionsOfInterest) {
-				for (Function calledFunction : calledFunctions) {
+			// iterate looking for functions of interest being called.
+			for (final String functionOfInterestName : this.functionsOfInterest) {
+				for (final Function calledFunction : calledFunctions) {
 
 					String calledFunctionName = calledFunction.toString();
 
@@ -118,17 +123,17 @@ public class VulnFunctionFinder extends GhidraScript {
 						break;
 					}
 
-					final DecompileResults decompileResults = this.decomplib.decompileFunction(function, 60, monitor);
+					final DecompileResults decompileResults = this.decomplib.decompileFunction(function, 60,
+							this.monitor);
 					final HighFunction hf = decompileResults.getHighFunction();
 					final ArrayList<PcodeBlockBasic> al = hf.getBasicBlocks();
-					for (int i = 0; i < al.size(); i++) {
-						PcodeBlockBasic pcbb = al.get(i);
-						Iterator<PcodeOp> pcodeIter = pcbb.getIterator();
+					for (final PcodeBlockBasic pcbb : al) {
+						final Iterator<PcodeOp> pcodeIter = pcbb.getIterator();
 						while (pcodeIter.hasNext()) {
 							final PcodeOp pcode = pcodeIter.next();
 							final int opCode = pcode.getOpcode();
 							if (opCode == 7) {
-								for (Varnode input : pcode.getInputs()) {
+								for (final Varnode input : pcode.getInputs()) {
 									if (input.getAddress().equals(calledFunction.getEntryPoint())) {
 										final AddressSet addressSet = new AddressSet(pcode.getSeqnum().getTarget());
 										results.put(addressSet, function.getName());
@@ -151,8 +156,8 @@ public class VulnFunctionFinder extends GhidraScript {
 		final String category = "Vulnerable Function";
 		final String comment = "Vulnerable Function Detected";
 
-		for (Entry<AddressSetView, String> entry : results.entrySet()) {
-			CompoundCmd cmd = new CompoundCmd("Set Note Bookmark");
+		for (final Entry<AddressSetView, String> entry : results.entrySet()) {
+			final CompoundCmd cmd = new CompoundCmd("Set Note Bookmark");
 			final AddressSetView addr = entry.getKey();
 
 			if (addr != null) {
@@ -160,7 +165,7 @@ public class VulnFunctionFinder extends GhidraScript {
 				cmd.add(new BookmarkEditCmd(addr, BookmarkType.NOTE, category, comment));
 			}
 
-			tool.execute(cmd, currentProgram);
+			tool.execute(cmd, this.currentProgram);
 		}
 
 	}
