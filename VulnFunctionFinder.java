@@ -5,11 +5,8 @@
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 
 import ghidra.app.decompiler.DecompInterface;
@@ -32,6 +29,7 @@ import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.PcodeBlockBasic;
 import ghidra.program.model.pcode.PcodeOp;
 import ghidra.program.model.pcode.Varnode;
+import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 
 /**
@@ -43,25 +41,63 @@ public class VulnFunctionFinder extends GhidraScript {
 	private final List<String> functionsOfInterest = Arrays.asList("printf", "atoi", "atol", "atoll", "gets", "strcat",
 			"memcpy", "strcpy", "sprintf", "system", "exec", "strncpy", "vsprintf", "strlen");
 
+	private class VulnFunctionDetails {
+		private Function function;
+		private AddressSetView addressSetView;
+		private String functionOfInterestName;
+
+		public VulnFunctionDetails(final Function function, final AddressSetView addressSetView,
+				final String functionOfInterestName) {
+			this.function = function;
+			this.addressSetView = addressSetView;
+			this.setFunctionOfInterestName(functionOfInterestName);
+		}
+
+		public Function getFunction() {
+			return this.function;
+		}
+
+		public void setFunction(final Function function) {
+			this.function = function;
+		}
+
+		public AddressSetView getAddressSetView() {
+			return this.addressSetView;
+		}
+
+		public void setAddressSetView(final AddressSetView addressSetView) {
+			this.addressSetView = addressSetView;
+		}
+
+		public String getFunctionOfInterestName() {
+			return this.functionOfInterestName;
+		}
+
+		public void setFunctionOfInterestName(final String functionOfInterestName) {
+			this.functionOfInterestName = functionOfInterestName;
+		}
+
+	}
+
 	/**
 	 * Decompile function.
 	 *
-	 * @param f the function to decompile.
+	 * @param function the function to decompile.
 	 * @return the high function of the decompiled function.
 	 */
-	public HighFunction decompileFunction(final Function f) {
-		HighFunction hfunction = null;
+	public HighFunction decompileFunction(final Function function) {
+		HighFunction highFunction = null;
 
 		try {
-			final DecompileResults dRes = this.decomplib.decompileFunction(f,
+			final DecompileResults decompiledResults = this.decomplib.decompileFunction(function,
 					this.decomplib.getOptions().getDefaultTimeout(), getMonitor());
-			hfunction = dRes.getHighFunction();
+			highFunction = decompiledResults.getHighFunction();
 		} catch (final Exception exc) {
 			printf("EXCEPTION IN DECOMPILATION!\n");
 			exc.printStackTrace();
 		}
 
-		return hfunction;
+		return highFunction;
 	}
 
 	/**
@@ -92,77 +128,87 @@ public class VulnFunctionFinder extends GhidraScript {
 		return decompInterface;
 	}
 
-	public Map<AddressSetView, String> getFunctions() {
-		final SymbolIterator symbolIter = this.currentProgram.getSymbolTable().getAllSymbols(false);
-		final FunctionManager functionManager = this.getCurrentProgram().getFunctionManager();
-		final Map<AddressSetView, String> results = new HashMap<>();
+	public boolean checkFunctionName(final String calledFunctionName, final String functionOfInterestName) {
+		String modifiedCalledFunctionName = calledFunctionName;
+		if (calledFunctionName.contains("EXTERNAL")) {
+			modifiedCalledFunctionName = calledFunctionName.replace("<EXTERNAL>::", "");
+		}
 
-		symbolIter.forEachRemaining(symbol -> {
+		return !functionOfInterestName.equalsIgnoreCase(modifiedCalledFunctionName);
+	}
 
-			final Function function = functionManager.getFunctionAt(symbol.getAddress());
-
-			// if function is null or it is an external function we skip it.
-			if (function == null || function.toString().contains("EXTERNAL")) {
-				return;
+	public void processPcode(final List<VulnFunctionDetails> results, final PcodeOp pcode,
+			final Function calledFunction, final Function function, final String functionOfInterestName) {
+		final int opCode = pcode.getOpcode();
+		if (opCode == 7) {
+			for (final Varnode input : pcode.getInputs()) {
+				if (input.getAddress().equals(calledFunction.getEntryPoint())) {
+					final AddressSet addressSet = new AddressSet(pcode.getSeqnum().getTarget());
+					results.add(new VulnFunctionDetails(function, addressSet, functionOfInterestName));
+				}
 			}
+		}
+	}
 
-			// get all called functions.
-			final Set<Function> calledFunctions = function.getCalledFunctions(null);
+	public void processSymbol(final Symbol symbol, final FunctionManager functionManager,
+			final List<VulnFunctionDetails> results) {
 
-			// iterate looking for functions of interest being called.
-			for (final String functionOfInterestName : this.functionsOfInterest) {
-				for (final Function calledFunction : calledFunctions) {
+		final Function function = functionManager.getFunctionAt(symbol.getAddress());
+		if (function == null || function.toString().contains("EXTERNAL")) {
+			return;
+		}
 
-					String calledFunctionName = calledFunction.toString();
+		final Set<Function> calledFunctions = function.getCalledFunctions(this.monitor);
 
-					if (calledFunctionName.contains("EXTERNAL")) {
-						calledFunctionName = calledFunction.toString().replace("<EXTERNAL>::", "");
+		// iterate looking for functions of interest being called.
+		for (final String functionOfInterestName : this.functionsOfInterest) {
+			for (final Function calledFunction : calledFunctions) {
+
+				if (checkFunctionName(calledFunction.toString(), functionOfInterestName)) {
+					break;
+				}
+
+				final HighFunction highFunction = decompileFunction(function);
+				final ArrayList<PcodeBlockBasic> basicBlocks = highFunction.getBasicBlocks();
+
+				for (final PcodeBlockBasic pcodeBlockBasic : basicBlocks) {
+					final Iterator<PcodeOp> pcodeIter = pcodeBlockBasic.getIterator();
+					while (pcodeIter.hasNext()) {
+						final PcodeOp pcode = pcodeIter.next();
+						processPcode(results, pcode, calledFunction, function, functionOfInterestName);
 					}
-
-					if (!functionOfInterestName.equalsIgnoreCase(calledFunctionName)) {
-						break;
-					}
-
-					final DecompileResults decompileResults = this.decomplib.decompileFunction(function, 60,
-							this.monitor);
-					final HighFunction hf = decompileResults.getHighFunction();
-					final ArrayList<PcodeBlockBasic> al = hf.getBasicBlocks();
-					for (final PcodeBlockBasic pcbb : al) {
-						final Iterator<PcodeOp> pcodeIter = pcbb.getIterator();
-						while (pcodeIter.hasNext()) {
-							final PcodeOp pcode = pcodeIter.next();
-							final int opCode = pcode.getOpcode();
-							if (opCode == 7) {
-								for (final Varnode input : pcode.getInputs()) {
-									if (input.getAddress().equals(calledFunction.getEntryPoint())) {
-										final AddressSet addressSet = new AddressSet(pcode.getSeqnum().getTarget());
-										results.put(addressSet, function.getName());
-									}
-								}
-							}
-						}
-					}
-
 				}
 
 			}
+
+		}
+	}
+
+	public List<VulnFunctionDetails> getFunctions() {
+		final SymbolIterator symbolIter = this.currentProgram.getSymbolTable().getAllSymbols(false);
+		final FunctionManager functionManager = this.getCurrentProgram().getFunctionManager();
+		final ArrayList<VulnFunctionDetails> results = new ArrayList<>();
+
+		symbolIter.forEachRemaining(symbol -> {
+			processSymbol(symbol, functionManager, results);
 		});
 
 		return results;
 	}
 
-	public void printToConsole(final Map<AddressSetView, String> results) {
+	public void printToConsole(final List<VulnFunctionFinder.VulnFunctionDetails> results) {
 		final PluginTool tool = this.state.getTool();
 		final String category = "Vulnerable Function";
-		final String comment = "Vulnerable Function Detected";
+		final String commentFormat = "Vulnerable Function %s Detected";
 
-		for (final Entry<AddressSetView, String> entry : results.entrySet()) {
+		for (final VulnFunctionDetails vulnFunctionDetails : results) {
 			final CompoundCmd cmd = new CompoundCmd("Set Note Bookmark");
-			final AddressSetView addr = entry.getKey();
+			final AddressSetView addr = vulnFunctionDetails.getAddressSetView();
+			final String comment = String.format(commentFormat, vulnFunctionDetails.getFunctionOfInterestName().toUpperCase());
 
 			if (addr != null) {
-				cmd.add(new BookmarkDeleteCmd(addr, BookmarkType.NOTE));
-				cmd.add(new BookmarkEditCmd(addr, BookmarkType.NOTE, category, comment));
+				cmd.add(new BookmarkDeleteCmd(addr, BookmarkType.WARNING));
+				cmd.add(new BookmarkEditCmd(addr, BookmarkType.WARNING, category, comment));
 			}
 
 			tool.execute(cmd, this.currentProgram);
@@ -181,7 +227,7 @@ public class VulnFunctionFinder extends GhidraScript {
 		if (!this.decomplib.openProgram(this.currentProgram)) {
 			printf("Decompiler error: %s\n", this.decomplib.getLastMessage());
 		} else {
-			final Map<AddressSetView, String> results = getFunctions();
+			final List<VulnFunctionFinder.VulnFunctionDetails> results = getFunctions();
 			printToConsole(results);
 		}
 
