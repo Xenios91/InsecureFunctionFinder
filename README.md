@@ -4,6 +4,7 @@
 - Author: Corey Hartman
 - Language: Java 17
 - Description: A Ghidra plugin to automatically find known insecure functions and will create a bookmark to quickly traverse to that location for review.
+- Currently woks for the following functions: atoi, atol, atoll, exec, gets, memcpy, printf, sprintf, strcat, strcpy, strlen, strncpy, system, vsprintf
 
 ## Installation/Compilation
 - Requires Ghidra
