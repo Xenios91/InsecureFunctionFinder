@@ -8,6 +8,7 @@
 ## Installation/Compilation
 - Requires Ghidra
 - Just place this script in your Ghidra plugins folder, which can be created by selecting "Manage Script Directories" in Ghidras Script Manager.
+- Note: This was tested on Ghidra 10.4.1, older versions may not work as intended.
 
 ## Utilization
 1. Perform analysis with Ghidra.
