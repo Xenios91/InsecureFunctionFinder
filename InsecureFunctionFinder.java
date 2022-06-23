@@ -35,18 +35,18 @@ import ghidra.program.model.symbol.SymbolIterator;
 /**
  * The Class ClangTokenGenerator.
  */
-public class VulnFunctionFinder extends GhidraScript {
+public class InsecureFunctionFinder extends GhidraScript {
 
 	private DecompInterface decomplib;
 	private final List<String> functionsOfInterest = Arrays.asList("printf", "atoi", "atol", "atoll", "gets", "strcat",
 			"memcpy", "strcpy", "sprintf", "system", "exec", "strncpy", "vsprintf", "strlen");
 
-	private class VulnFunctionDetails {
+	private class InsecureFunctionDetails {
 		private Function function;
 		private AddressSetView addressSetView;
 		private String functionOfInterestName;
 
-		public VulnFunctionDetails(final Function function, final AddressSetView addressSetView,
+		public InsecureFunctionDetails(final Function function, final AddressSetView addressSetView,
 				final String functionOfInterestName) {
 			this.function = function;
 			this.addressSetView = addressSetView;
@@ -137,21 +137,21 @@ public class VulnFunctionFinder extends GhidraScript {
 		return !functionOfInterestName.equalsIgnoreCase(modifiedCalledFunctionName);
 	}
 
-	public void processPcode(final List<VulnFunctionDetails> results, final PcodeOp pcode,
+	public void processPcode(final List<InsecureFunctionDetails> results, final PcodeOp pcode,
 			final Function calledFunction, final Function function, final String functionOfInterestName) {
 		final int opCode = pcode.getOpcode();
 		if (opCode == 7) {
 			for (final Varnode input : pcode.getInputs()) {
 				if (input.getAddress().equals(calledFunction.getEntryPoint())) {
 					final AddressSet addressSet = new AddressSet(pcode.getSeqnum().getTarget());
-					results.add(new VulnFunctionDetails(function, addressSet, functionOfInterestName));
+					results.add(new InsecureFunctionDetails(function, addressSet, functionOfInterestName));
 				}
 			}
 		}
 	}
 
 	public void processSymbol(final Symbol symbol, final FunctionManager functionManager,
-			final List<VulnFunctionDetails> results) {
+			final List<InsecureFunctionDetails> results) {
 
 		final Function function = functionManager.getFunctionAt(symbol.getAddress());
 		if (function == null || function.toString().contains("EXTERNAL")) {
@@ -184,11 +184,12 @@ public class VulnFunctionFinder extends GhidraScript {
 		}
 	}
 
-	public List<VulnFunctionDetails> getFunctions() {
+	public List<InsecureFunctionDetails> getFunctions() {
 		final SymbolIterator symbolIter = this.currentProgram.getSymbolTable().getAllSymbols(false);
 		final FunctionManager functionManager = this.getCurrentProgram().getFunctionManager();
-		final ArrayList<VulnFunctionDetails> results = new ArrayList<>();
+		final ArrayList<InsecureFunctionDetails> results = new ArrayList<>();
 
+		// process each symbol
 		symbolIter.forEachRemaining(symbol -> {
 			processSymbol(symbol, functionManager, results);
 		});
@@ -196,12 +197,14 @@ public class VulnFunctionFinder extends GhidraScript {
 		return results;
 	}
 
-	public void printToConsole(final List<VulnFunctionFinder.VulnFunctionDetails> results) {
+	
+	public void printToConsole(final List<InsecureFunctionFinder.InsecureFunctionDetails> results) {
 		final PluginTool tool = this.state.getTool();
-		final String category = "Vulnerable Function";
-		final String commentFormat = "Vulnerable Function %s Detected";
+		final String category = "Insecure Function";
+		final String commentFormat = "Insecure Function %s Detected";
 
-		for (final VulnFunctionDetails vulnFunctionDetails : results) {
+		// add each insecure function detected to bookmarks
+		for (final InsecureFunctionDetails vulnFunctionDetails : results) {
 			final CompoundCmd cmd = new CompoundCmd("Set Note Bookmark");
 			final AddressSetView addr = vulnFunctionDetails.getAddressSetView();
 			final String comment = String.format(commentFormat, vulnFunctionDetails.getFunctionOfInterestName().toUpperCase());
@@ -227,7 +230,7 @@ public class VulnFunctionFinder extends GhidraScript {
 		if (!this.decomplib.openProgram(this.currentProgram)) {
 			printf("Decompiler error: %s\n", this.decomplib.getLastMessage());
 		} else {
-			final List<VulnFunctionFinder.VulnFunctionDetails> results = getFunctions();
+			final List<InsecureFunctionFinder.InsecureFunctionDetails> results = getFunctions();
 			printToConsole(results);
 		}
 
