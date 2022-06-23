@@ -128,23 +128,18 @@ public class InsecureFunctionFinder extends GhidraScript {
 		return decompInterface;
 	}
 
-	public boolean checkFunctionName(final String calledFunctionName, final String functionOfInterestName) {
-		String modifiedCalledFunctionName = calledFunctionName;
-		if (calledFunctionName.contains("EXTERNAL")) {
-			modifiedCalledFunctionName = calledFunctionName.replace("<EXTERNAL>::", "");
-		}
-
-		return !functionOfInterestName.equalsIgnoreCase(modifiedCalledFunctionName);
-	}
-
 	public void processPcode(final List<InsecureFunctionDetails> results, final PcodeOp pcode,
-			final Function calledFunction, final Function function, final String functionOfInterestName) {
+			final Function calledFunction, final Function function) {
 		final int opCode = pcode.getOpcode();
 		if (opCode == 7) {
 			for (final Varnode input : pcode.getInputs()) {
 				if (input.getAddress().equals(calledFunction.getEntryPoint())) {
-					final AddressSet addressSet = new AddressSet(pcode.getSeqnum().getTarget());
-					results.add(new InsecureFunctionDetails(function, addressSet, functionOfInterestName));
+					for (String functionOfInterestName : this.functionsOfInterest) {
+						if (calledFunction.getName().equalsIgnoreCase(functionOfInterestName)) {
+							final AddressSet addressSet = new AddressSet(pcode.getSeqnum().getTarget());
+							results.add(new InsecureFunctionDetails(function, addressSet, functionOfInterestName));
+						}
+					}
 				}
 			}
 		}
@@ -159,29 +154,21 @@ public class InsecureFunctionFinder extends GhidraScript {
 		}
 
 		final Set<Function> calledFunctions = function.getCalledFunctions(this.monitor);
+		for (final Function calledFunction : calledFunctions) {
 
-		// iterate looking for functions of interest being called.
-		for (final String functionOfInterestName : this.functionsOfInterest) {
-			for (final Function calledFunction : calledFunctions) {
+			final HighFunction highFunction = decompileFunction(function);
+			final ArrayList<PcodeBlockBasic> basicBlocks = highFunction.getBasicBlocks();
 
-				if (checkFunctionName(calledFunction.toString(), functionOfInterestName)) {
-					break;
+			for (final PcodeBlockBasic pcodeBlockBasic : basicBlocks) {
+				final Iterator<PcodeOp> pcodeIter = pcodeBlockBasic.getIterator();
+				while (pcodeIter.hasNext()) {
+					final PcodeOp pcode = pcodeIter.next();
+					processPcode(results, pcode, calledFunction, function);
 				}
-
-				final HighFunction highFunction = decompileFunction(function);
-				final ArrayList<PcodeBlockBasic> basicBlocks = highFunction.getBasicBlocks();
-
-				for (final PcodeBlockBasic pcodeBlockBasic : basicBlocks) {
-					final Iterator<PcodeOp> pcodeIter = pcodeBlockBasic.getIterator();
-					while (pcodeIter.hasNext()) {
-						final PcodeOp pcode = pcodeIter.next();
-						processPcode(results, pcode, calledFunction, function, functionOfInterestName);
-					}
-				}
-
 			}
 
 		}
+
 	}
 
 	public List<InsecureFunctionDetails> getFunctions() {
@@ -197,7 +184,6 @@ public class InsecureFunctionFinder extends GhidraScript {
 		return results;
 	}
 
-	
 	public void printToConsole(final List<InsecureFunctionFinder.InsecureFunctionDetails> results) {
 		final PluginTool tool = this.state.getTool();
 		final String category = "Insecure Function";
@@ -207,7 +193,8 @@ public class InsecureFunctionFinder extends GhidraScript {
 		for (final InsecureFunctionDetails vulnFunctionDetails : results) {
 			final CompoundCmd cmd = new CompoundCmd("Set Note Bookmark");
 			final AddressSetView addr = vulnFunctionDetails.getAddressSetView();
-			final String comment = String.format(commentFormat, vulnFunctionDetails.getFunctionOfInterestName().toUpperCase());
+			final String comment = String.format(commentFormat,
+					vulnFunctionDetails.getFunctionOfInterestName().toUpperCase());
 
 			if (addr != null) {
 				cmd.add(new BookmarkDeleteCmd(addr, BookmarkType.WARNING));
