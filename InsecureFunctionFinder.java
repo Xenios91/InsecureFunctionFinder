@@ -138,6 +138,7 @@ public class InsecureFunctionFinder extends GhidraScript {
 						if (calledFunction.getName().equalsIgnoreCase(functionOfInterestName)) {
 							final AddressSet addressSet = new AddressSet(pcode.getSeqnum().getTarget());
 							results.add(new InsecureFunctionDetails(function, addressSet, functionOfInterestName));
+							break;
 						}
 					}
 				}
